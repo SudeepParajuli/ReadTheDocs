@@ -1,0 +1,151 @@
+version: '3'
+
+networks:
+  public: {}
+
+volumes:
+  grafana_lib: {}
+  prometheus_data: {}
+  prometheus_config:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+
+
+services:
+  database:
+    image: nouchka/sqlite3
+    container_name: db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    networks:
+      - public
+   
+    healthcheck:
+      test: "exit 0"
+    tty: true
+
+
+  portainer:
+    image: portainer/portainer:1.20.2
+    restart: always
+    ports:
+      - "9000:9000"
+    networks:
+      - public
+      
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./portainer/data:/data portainer/portainer
+    
+    healthcheck:
+      test: "exit 0"
+    
+    
+
+  web:
+    image: test:1
+    container_name: readthedoc
+    expose:
+      - "8000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    volumes:
+      - /home/ubuntu/docportal:/app
+    networks:
+      - public
+    command: scripts/req.sh
+    healthcheck:
+      test: "exit 0" 
+    depends_on:
+      - database
+    tty: true
+
+  nginx:
+    image: webapp-nginx
+    container_name: nginx
+    build:
+      context: .
+      dockerfile: Dockerfile-nginx
+    ports:
+      - "80:8000"
+    networks:
+      - public
+    depends_on:
+      - web
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    healthcheck:
+      test: "exit 0"
+    volumes:
+        - ./app.conf:/etc/nginx/conf.d/default.conf
+    tty: true
+
+
+  prometheus:
+    image: prom/prometheus:v2.1.0
+    container_name: prometheous
+    ports:
+      - 9090:9090
+    networks:
+      - public
+    volumes:
+      - prometheus_data:/prometheus
+      - prometheus_config:/fragments/
+      - ./prometheus-server/config/targets/prometheus.json:/etc/prometheus/targets/prometheus.json
+      - ./prometheus-server/config/targets/grafana.json:/etc/prometheus/targets/grafana.json
+    command:
+      - '--config.file=/fragments/complete/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on: 
+      - web
+    healthcheck:
+      test: "exit 0"
+
+  grafana:
+    image: grafana/grafana:5.0.4
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - public
+    volumes:
+      - grafana_lib:/var/lib/grafana
+      - ./prometheus-server/config/datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
+    depends_on:
+      - web
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    healthcheck:
+      test: "exit 0"
+    
+
+  config-concat:
+    image: deanwilson/promconf-concat:0.1.0
+    container_name: config_prometheus
+    volumes:
+      - prometheus_config:/fragments/
+      - ./prometheus-server/config/base_prometheus.yml:/base_prometheus.yml
+    depends_on:
+      - web 
+    networks:
+      - public
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    healthcheck:
+      test: "exit 0"
